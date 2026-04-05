@@ -10,6 +10,15 @@ document.addEventListener('DOMContentLoaded', () => {
     expStartButton: document.getElementById('exp-start-button'),
     expStopButton: document.getElementById('exp-stop-button'),
     expAutomationStatus: document.getElementById('exp-automation-status'),
+    expMeta: document.getElementById('exp-meta'),
+    expPillCompleted: document.getElementById('exp-pill-completed'),
+    expPillFailed: document.getElementById('exp-pill-failed'),
+    expPillRunning: document.getElementById('exp-pill-running'),
+    expPillUpdated: document.getElementById('exp-pill-updated'),
+    expListWrap: document.getElementById('exp-list-wrap'),
+    expListTitle: document.getElementById('exp-list-title'),
+    expListSubtitle: document.getElementById('exp-list-subtitle'),
+    expCompletedList: document.getElementById('exp-completed-list'),
 
     loginModal: document.getElementById('login-modal'),
     closeModal: document.getElementById('close-modal'),
@@ -28,6 +37,9 @@ document.addEventListener('DOMContentLoaded', () => {
     latestCalendarPayload: null,
     expIsRunning: false,
     expStatusPollTimer: null,
+    expStatusPollCount: 0,
+    expJobsSnapshot: null,
+    expLastJobsFetchedAt: null,
     lastPortraitSaveKey: null,
     lastLeagueTablesSaveKey: null,
     lastCalendarSaveKey: null,
@@ -347,11 +359,95 @@ document.addEventListener('DOMContentLoaded', () => {
     return `Running batch ${status.batchKey || '-'}: ${progressText}${failedText}.`;
   }
 
+  function formatTimeForUi(value) {
+    if (!value) return '-';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '-';
+    return date.toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit'
+    });
+  }
+
+  function escapeHtml(value) {
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function renderExpJobs(summary, jobs) {
+    const total = Number.isInteger(summary?.seed_count) ? summary.seed_count : 0;
+    const completed = Number.isInteger(summary?.completed_count) ? summary.completed_count : 0;
+    const failed = Number.isInteger(summary?.failed_count) ? summary.failed_count : 0;
+    const runningJob = jobs?.running || null;
+    const completedJobs = Array.isArray(jobs?.completed) ? jobs.completed : [];
+    const hasAnyData = total > 0 || completedJobs.length > 0 || !!runningJob;
+
+    if (els.expMeta) els.expMeta.style.display = hasAnyData ? 'grid' : 'none';
+    if (els.expListWrap) els.expListWrap.style.display = hasAnyData ? 'block' : 'none';
+    if (!hasAnyData) return;
+
+    if (els.expPillCompleted) {
+      els.expPillCompleted.textContent = `${completed}/${total || '-'}`;
+    }
+    if (els.expPillFailed) {
+      els.expPillFailed.textContent = String(failed);
+    }
+    if (els.expPillRunning) {
+      if (runningJob?.dtb_id) {
+        const name = runningJob.player_name || `DTB ${runningJob.dtb_id}`;
+        els.expPillRunning.textContent = `${name}`;
+      } else {
+        els.expPillRunning.textContent = '-';
+      }
+    }
+    if (els.expPillUpdated) {
+      els.expPillUpdated.textContent = formatTimeForUi(state.expLastJobsFetchedAt);
+    }
+
+    if (els.expListTitle) {
+      els.expListTitle.textContent = 'Recently Scraped Players';
+    }
+    if (els.expListSubtitle) {
+      els.expListSubtitle.textContent = `${completedJobs.length} shown`;
+    }
+
+    if (!els.expCompletedList) return;
+    if (completedJobs.length === 0) {
+      els.expCompletedList.innerHTML = '<div class="exp-empty">No completed players yet.</div>';
+      return;
+    }
+
+    els.expCompletedList.innerHTML = completedJobs.map((job) => {
+      const rank = Number.isInteger(job?.source_rank) ? `#${job.source_rank}` : '#-';
+      const name = job?.player_name ? escapeHtml(job.player_name) : `DTB ${job?.dtb_id || '-'}`;
+      const dtbText = job?.dtb_id ? `DTB ${job.dtb_id}` : 'DTB -';
+      const matches = Number.isInteger(job?.matches_scraped) ? job.matches_scraped : 0;
+      const finished = formatTimeForUi(job?.last_finished_at);
+      return `
+        <div class="exp-row">
+          <div class="exp-row-main">
+            <span>${rank} ${name}</span>
+            <span>${matches} matches</span>
+          </div>
+          <div class="exp-row-sub">${dtbText} • finished ${finished}</div>
+        </div>
+      `;
+    }).join('');
+  }
+
   async function refreshExpStatus() {
     const teamPortraitUrl = await resolveCurrentTeamPortraitUrl();
+    const shouldFetchJobs = state.expStatusPollCount === 0 || (state.expStatusPollCount % 3 === 0);
     const response = await sendRuntimeMessage({
       action: 'expGetPlayerHistoryAutomationStatus',
-      teamPortraitUrl
+      teamPortraitUrl,
+      includeJobs: shouldFetchJobs,
+      jobsLimit: 60
     });
     if (!response?.success) {
       setStatus(els.expAutomationStatus, `Status error: ${response?.error || 'Unknown error'}`, 'error');
@@ -366,10 +462,16 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
     const summary = response.summary || null;
+    if (response.jobs) {
+      state.expJobsSnapshot = response.jobs;
+      state.expLastJobsFetchedAt = new Date().toISOString();
+    }
     const type = status.isRunning ? 'info' : (status.lastError ? 'error' : 'success');
     setStatus(els.expAutomationStatus, formatExpStatusText(status, summary), type);
+    renderExpJobs(summary, state.expJobsSnapshot);
     if (els.expStartButton) els.expStartButton.disabled = !!status.isRunning;
     if (els.expStopButton) els.expStopButton.disabled = !status.isRunning;
+    state.expStatusPollCount += 1;
   }
 
   function startExpStatusPolling() {

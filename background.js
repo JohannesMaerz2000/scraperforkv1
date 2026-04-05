@@ -1064,16 +1064,32 @@ async function handleGetExperimentalPlayerHistoryAutomationStatus(request = {}) 
   const status = getExpAutomationStatus();
   const teamPortraitUrl = String(request.teamPortraitUrl || status.teamPortraitUrl || '').trim();
   const batchKey = String(request.batchKey || status.batchKey || (teamPortraitUrl ? buildStableBatchKeyForTeamUrl(teamPortraitUrl) : ''));
+  const includeJobs = request.includeJobs === true;
+  const jobsLimit = Number.isInteger(request.jobsLimit) ? request.jobsLimit : 40;
 
   if (!isClientReadyAndAuthed() || !batchKey) {
-    return { success: true, status, summary: null };
+    return { success: true, status, summary: null, jobs: null };
   }
 
   const summaryResult = await getClient().expGetPlayerHistoryBatchSummary({ batchKey });
   if (!summaryResult?.success) {
-    return { success: true, status, summary: null };
+    return { success: true, status, summary: null, jobs: null };
   }
-  return { success: true, status, summary: summaryResult.data || null };
+
+  const summary = summaryResult.data || null;
+  let jobs = null;
+
+  if (includeJobs && summary?.id) {
+    const jobsResult = await getClient().expGetPlayerHistoryBatchJobsSnapshot({
+      batchId: summary.id,
+      completedLimit: jobsLimit
+    });
+    if (jobsResult?.success) {
+      jobs = jobsResult.data || null;
+    }
+  }
+
+  return { success: true, status, summary, jobs };
 }
 
 const actionHandlers = {

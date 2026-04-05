@@ -1938,6 +1938,60 @@ class SupabaseClient {
         }
     }
 
+    async expGetPlayerHistoryBatchJobsSnapshot({
+        batchId,
+        completedLimit = 40
+    } = {}) {
+        if (!this.isReady()) {
+            throw new Error('Supabase client not initialized');
+        }
+        if (!batchId) {
+            return { success: false, error: 'batchId is required' };
+        }
+
+        const safeLimit = Math.max(1, Math.min(200, parseInt(completedLimit, 10) || 40));
+        const fields = 'id,dtb_id,player_name,source_rank,status,matches_scraped,last_sync_mode,last_started_at,last_finished_at,last_error_message';
+
+        try {
+            const [runningResponse, completedResponse] = await Promise.all([
+                this.makeRequest(
+                    'GET',
+                    `/rest/v1/${this.expHistoryJobTable}?batch_id=eq.${encodeURIComponent(batchId)}&status=eq.running&order=last_started_at.desc.nullslast,id.desc&limit=1&select=${fields}`
+                ),
+                this.makeRequest(
+                    'GET',
+                    `/rest/v1/${this.expHistoryJobTable}?batch_id=eq.${encodeURIComponent(batchId)}&status=eq.completed&order=last_finished_at.desc.nullslast,source_rank.asc.nullslast,id.asc&limit=${safeLimit}&select=${fields}`
+                )
+            ]);
+
+            if (!runningResponse.ok) {
+                const text = await runningResponse.text();
+                throw new Error(`Failed to load running job: ${runningResponse.status} ${text}`);
+            }
+            if (!completedResponse.ok) {
+                const text = await completedResponse.text();
+                throw new Error(`Failed to load completed jobs: ${completedResponse.status} ${text}`);
+            }
+
+            const [runningRows, completedRows] = await Promise.all([
+                runningResponse.json(),
+                completedResponse.json()
+            ]);
+
+            return {
+                success: true,
+                data: {
+                    running: Array.isArray(runningRows) ? (runningRows[0] || null) : null,
+                    completed: Array.isArray(completedRows) ? completedRows : [],
+                    completedLimit: safeLimit
+                }
+            };
+        } catch (error) {
+            console.error('❌ expGetPlayerHistoryBatchJobsSnapshot failed:', error);
+            return { success: false, error: error.message };
+        }
+    }
+
     /**
      * Save tournament metadata (upsert by event_id)
      */

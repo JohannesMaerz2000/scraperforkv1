@@ -77,6 +77,73 @@
       margin-top: 6px;
       line-height: 1.35;
     }
+    .exp-meta {
+      margin-top: 8px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+    }
+    .exp-pill {
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      padding: 7px 8px;
+      font-size: 11px;
+      background: #f8fafc;
+      color: #0f172a;
+    }
+    .exp-pill strong {
+      display: block;
+      font-size: 13px;
+      margin-top: 1px;
+    }
+    .exp-list-wrap {
+      margin-top: 10px;
+      border: 1px solid #d1d5db;
+      border-radius: 10px;
+      overflow: hidden;
+      background: #ffffff;
+    }
+    .exp-list-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 7px 9px;
+      border-bottom: 1px solid #e5e7eb;
+      background: #f8fafc;
+      font-size: 11px;
+      color: #334155;
+      font-weight: 600;
+    }
+    .exp-list {
+      max-height: 230px;
+      overflow: auto;
+      font-size: 12px;
+    }
+    .exp-row {
+      padding: 8px 9px;
+      border-bottom: 1px solid #f1f5f9;
+      line-height: 1.3;
+    }
+    .exp-row:last-child {
+      border-bottom: none;
+    }
+    .exp-row-main {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      color: #0f172a;
+      font-weight: 600;
+    }
+    .exp-row-sub {
+      margin-top: 2px;
+      color: #64748b;
+      font-size: 11px;
+    }
+    .exp-empty {
+      padding: 10px;
+      font-size: 12px;
+      color: #64748b;
+    }
     .inline-input {
       width: 100%;
       border: 1px solid #d1d5db;
@@ -140,6 +207,19 @@
       </div>
       <div class="compact-help">Works on the currently open `#teamportrait/...` URL and resumes later from where it left off.</div>
       <div id="exp-automation-status" class="status-item status-info"></div>
+      <div id="exp-meta" class="exp-meta" style="display:none;">
+        <div class="exp-pill">Completed <strong id="exp-pill-completed">0</strong></div>
+        <div class="exp-pill">Failed <strong id="exp-pill-failed">0</strong></div>
+        <div class="exp-pill">Running Player <strong id="exp-pill-running">-</strong></div>
+        <div class="exp-pill">List Updated <strong id="exp-pill-updated">-</strong></div>
+      </div>
+      <div id="exp-list-wrap" class="exp-list-wrap" style="display:none;">
+        <div class="exp-list-head">
+          <span id="exp-list-title">Recently Scraped Players</span>
+          <span id="exp-list-subtitle"></span>
+        </div>
+        <div id="exp-completed-list" class="exp-list"></div>
+      </div>
     </div>
   </div>
 

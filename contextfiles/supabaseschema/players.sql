@@ -18,6 +18,13 @@ create table public.players (
   history_last_sync_mode text null,
   history_last_sync_status text null,
   main_club_id uuid null,
+  gender_inferred text GENERATED ALWAYS as (
+    case
+      when ("left" ((dtb_id)::text, 1) = '1'::text) then 'm'::text
+      when ("left" ((dtb_id)::text, 1) = '2'::text) then 'w'::text
+      else null::text
+    end
+  ) STORED null,
   constraint players_pkey primary key (id),
   constraint players_dtb_id_key unique (dtb_id),
   constraint players_main_club_id_fkey foreign KEY (main_club_id) references clubs (id) on delete set null,
@@ -50,6 +57,8 @@ create index IF not exists idx_players_dtb_id on public.players using btree (dtb
 create index IF not exists idx_players_name on public.players using btree (full_name) TABLESPACE pg_default;
 
 create index IF not exists idx_players_main_club_id on public.players using btree (main_club_id) TABLESPACE pg_default;
+
+create index IF not exists idx_players_gender_inferred on public.players using btree (gender_inferred) TABLESPACE pg_default;
 
 create trigger update_players_updated_at BEFORE
 update on players for EACH row
