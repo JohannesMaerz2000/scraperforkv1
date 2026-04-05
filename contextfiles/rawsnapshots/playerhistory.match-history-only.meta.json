@@ -1,0 +1,13 @@
+{
+  "source": "rawsnapshots/playerhistory.html",
+  "captured_on": "2026-04-03",
+  "extraction": "Single .gbtrninfo.gbtrninfo-true groupbox block only",
+  "purpose": "Minimal fixture for match-history scraper selectors and parsing",
+  "includes": [
+    "Alle Spiele laden button container",
+    "Match rows (.z-row) under .z-grid-body .z-rows",
+    "matchbadge event rows",
+    "KW rows",
+    "score containers with border-left color and LK-Verbesserung"
+  ]
+}

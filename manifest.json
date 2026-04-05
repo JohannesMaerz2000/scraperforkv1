@@ -1,0 +1,76 @@
+{
+  "manifest_version": 3,
+  "name": "Tennis.de Match Scraper",
+  "version": "1.2",
+  "description": "Scrapes match data from tennis.de profiles and syncs with a Supabase database.",
+  "permissions": [
+    "storage",
+    "scripting",
+    "tabs",
+    "webNavigation",
+    "sidePanel"
+  ],
+  "host_permissions": [
+    "https://www.tennis.de/*",
+    "https://widgets.tennis.de/*",
+    "https://dtb.liga.nu/*",
+    "https://*.supabase.co/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.tennis.de/spielen/spielerprofil.html*",
+        "https://www.tennis.de/spielen/spielbetrieb/spielerprofil.html*",
+        "https://www.tennis.de/*spielerprofil*"
+      ],
+      "js": ["content.js"]
+    },
+    {
+      "matches": [
+        "https://www.tennis.de/spielen/turniersuche.html*",
+        "https://www.tennis.de/spielen/spielbetrieb/turniersuche.html*",
+        "https://www.tennis.de/*turniersuche*"
+      ],
+      "js": ["tournament-content.js"]
+    },
+    {
+      "matches": [
+        "https://www.tennis.de/spielen/mannschaftssuche.html*",
+        "https://www.tennis.de/spielen/spielbetrieb/mannschaftssuche.html*",
+        "https://www.tennis.de/*mannschaftssuche*",
+        "https://www.tennis.de/spielen/vereinsspielplan.html*",
+        "https://www.tennis.de/spielen/spielbetrieb/vereinsspielplan.html*",
+        "https://www.tennis.de/*vereinsspielplan*",
+        "https://dtb.liga.nu/cgi-bin/WebObjects/nuLigaDokumentTENDE.woa/wa/nuDokument*"
+      ],
+      "js": ["league-parsers.js", "club-content.js"]
+    }
+  ],
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["supabase-client.js", "config.js"],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  },
+  "action": {
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "source": "rawsnapshots/playerhistorywide.html",
+  "captured_on": "2026-04-03",
+  "extraction": "Single .gbtrninfo.gbtrninfo-true groupbox block only",
+  "viewport_variant": "wide",
+  "purpose": "Desktop/wide fixture for match-history scraper selectors and parsing"
+}

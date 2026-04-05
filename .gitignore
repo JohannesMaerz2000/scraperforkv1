@@ -1,0 +1,17 @@
+# OS files
+.DS_Store
+Thumbs.db
+
+# User config or secrets (if applicable)
+# .env
+
+# Chrome Extension Developer Files
+*.crx
+*.pem
+
+# Node metadata if present
+node_modules/
+package-lock.json
+
+# Logs
+*.log

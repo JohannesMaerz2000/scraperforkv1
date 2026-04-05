@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tennis.de Club Scraper</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #0f766e 0%, #0ea5a4 100%);
+      min-height: 100vh;
+      color: #1f2937;
+    }
+    .container { padding: 18px; }
+    .page-status {
+      background: rgba(255,255,255,0.85);
+      border-radius: 10px;
+      padding: 8px 12px;
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+    .auth-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 10px;
+      border-radius: 10px;
+      background: rgba(255,255,255,0.75);
+      margin-bottom: 14px;
+      gap: 10px;
+    }
+    .auth-row small { font-size: 12px; color: #4b5563; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .btn {
+      border: none;
+      cursor: pointer;
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-weight: 600;
+    }
+    .btn-auth { padding: 6px 10px; font-size: 12px; background: white; }
+    .section {
+      background: rgba(255,255,255,0.95);
+      border-radius: 14px;
+      padding: 14px;
+      margin-bottom: 12px;
+    }
+    .section h2 { font-size: 16px; margin-bottom: 8px; }
+    .club-meta { font-size: 13px; color: #4b5563; line-height: 1.45; white-space: pre-line; }
+    .status-item {
+      padding: 10px;
+      border-radius: 8px;
+      font-size: 13px;
+      margin-top: 8px;
+      display: none;
+    }
+    .status-info { background: #e0f2fe; color: #0f172a; }
+    .status-success { background: #dcfce7; color: #14532d; }
+    .status-error { background: #fee2e2; color: #7f1d1d; }
+    .control-row {
+      display: flex;
+      gap: 8px;
+      margin-top: 8px;
+      align-items: center;
+    }
+    .control-row .btn {
+      flex: 1;
+      padding: 8px 10px;
+      font-size: 12px;
+    }
+    .btn-primary { background: #0f766e; color: white; }
+    .btn-danger { background: #b91c1c; color: white; }
+    .compact-help {
+      font-size: 12px;
+      color: #4b5563;
+      margin-top: 6px;
+      line-height: 1.35;
+    }
+    .inline-input {
+      width: 100%;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      padding: 8px;
+      margin: 0;
+      font-size: 12px;
+    }
+    .modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.45);
+      display: none;
+      z-index: 5;
+    }
+    .modal-content {
+      background: white;
+      width: 90%;
+      max-width: 360px;
+      border-radius: 12px;
+      margin: 12% auto;
+      padding: 16px;
+    }
+    .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+    .close { cursor: pointer; font-size: 24px; color: #6b7280; }
+    input {
+      width: 100%;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      padding: 10px;
+      margin-bottom: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div id="page-status" class="page-status">Searching for club pages...</div>
+
+    <div class="auth-row">
+      <small id="auth-status">Not logged in</small>
+      <button id="auth-button" class="btn btn-auth">Login</button>
+    </div>
+
+    <div class="section">
+      <h2>Club Context</h2>
+      <div id="club-meta" class="club-meta">Open a team portrait or Vereinsspielplan page.</div>
+    </div>
+
+    <div class="section">
+      <h2>Sync Status</h2>
+      <div id="portrait-sync-status" class="status-item status-info"></div>
+      <div id="league-tables-sync-status" class="status-item status-info"></div>
+      <div id="calendar-sync-status" class="status-item status-info"></div>
+    </div>
+
+    <div class="section">
+      <h2>Scrape Full Playerlist</h2>
+      <div class="control-row">
+        <button id="exp-start-button" class="btn btn-primary" type="button">Scrape Full Playerlist</button>
+        <button id="exp-stop-button" class="btn btn-danger" type="button">Stop</button>
+      </div>
+      <div class="compact-help">Works on the currently open `#teamportrait/...` URL and resumes later from where it left off.</div>
+      <div id="exp-automation-status" class="status-item status-info"></div>
+    </div>
+  </div>
+
+  <div id="login-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>Login</h3>
+        <span id="close-modal" class="close">&times;</span>
+      </div>
+      <div id="login-status" class="status-item status-error" style="display:none"></div>
+      <form id="login-form">
+        <input id="email-input" type="email" placeholder="Email" required>
+        <input id="password-input" type="password" placeholder="Password" required>
+        <button id="login-submit" class="btn" type="submit" style="width:100%; background:#0f766e; color:white;">Sign In</button>
+      </form>
+    </div>
+  </div>
+
+  <script src="config.js"></script>
+  <script src="supabase.js"></script>
+  <script src="supabase-client.js"></script>
+  <script src="club-sidepanel.js"></script>
+</body>
+</html>

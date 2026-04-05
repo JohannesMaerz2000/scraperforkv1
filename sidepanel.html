@@ -1,0 +1,809 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tennis.de Scraper</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+        }
+
+        .container {
+            padding: 20px;
+            max-width: 100%;
+        }
+
+        .top-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+
+        .btn-login {
+            background: rgba(255, 255, 255, 0.7);
+            border: 1px solid rgba(0, 0, 0, 0.1);
+            border-radius: 8px;
+            padding: 8px 12px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            color: #666;
+        }
+
+        .btn-login:hover {
+            background: rgba(255, 255, 255, 0.9);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+
+        .page-status {
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 500;
+            flex: 1;
+            margin-right: 12px;
+        }
+
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+
+        .section-header h2 {
+            margin: 0;
+            font-size: 18px;
+            font-weight: 600;
+            color: #2d3748;
+        }
+
+        .section-header .btn {
+            padding: 10px 16px;
+            font-size: 14px;
+            min-width: auto;
+            width: auto;
+        }
+
+        .section {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 16px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .section h2 {
+            color: #2d3748;
+            font-size: 18px;
+            margin-bottom: 16px;
+            font-weight: 600;
+        }
+
+        .input-group {
+            margin-bottom: 16px;
+        }
+
+        input {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e2e8f0;
+            border-radius: 12px;
+            font-size: 14px;
+            transition: all 0.3s ease;
+            background: #fff;
+            margin-bottom: 12px;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .btn {
+            padding: 14px 20px;
+            border: none;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+            width: 100%;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            margin-bottom: 12px;
+        }
+
+        .btn-secondary {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+            margin-bottom: 12px;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 24px rgba(0, 0, 0, 0.15);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .status-message {
+            margin: 0 0 16px 0;
+            padding: 10px 14px;
+            border-radius: 10px;
+            font-weight: 500;
+            text-align: center;
+            font-size: 13px;
+            transition: all 0.3s ease;
+        }
+
+        .status-message:empty {
+            display: none;
+        }
+
+        .status-info {
+            background: #e6fffa;
+            color: #234e52;
+            border: 1px solid #b2f5ea;
+        }
+
+        .status-success {
+            background: #f0fff4;
+            color: #22543d;
+            border: 1px solid #9ae6b4;
+        }
+
+        .status-error {
+            background: #fed7d7;
+            color: #822727;
+            border: 1px solid #feb2b2;
+        }
+
+        .status-ready {
+            background: linear-gradient(135deg, #d4edda, #c3e6cb);
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .status-navigate {
+            background: linear-gradient(135deg, #fff3cd, #ffeaa7);
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+
+        .results-container {
+            max-height: 400px;
+            overflow-y: auto;
+            border-radius: 12px;
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+        }
+
+        .match-item {
+            padding: 16px;
+            border-bottom: 1px solid #e2e8f0;
+            transition: background-color 0.2s ease;
+        }
+
+        .match-item:hover {
+            background: #edf2f7;
+        }
+
+        .match-item:last-child {
+            border-bottom: none;
+        }
+
+        .match-header {
+            font-weight: 600;
+            color: #2d3748;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+
+        .match-players {
+            color: #4a5568;
+            font-size: 13px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .match-score {
+            font-weight: 600;
+            padding: 4px 8px;
+            border-radius: 8px;
+            font-size: 12px;
+        }
+
+        .score-win {
+            background: #c6f6d5;
+            color: #22543d;
+        }
+
+        .score-loss {
+            background: #fed7d7;
+            color: #822727;
+        }
+
+        .score-unknown {
+            background: #e2e8f0;
+            color: #4a5568;
+        }
+
+        .progress-container {
+            margin: 16px 0;
+            padding: 16px;
+            border-radius: 12px;
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: #e2e8f0;
+            border-radius: 4px;
+            overflow: hidden;
+            margin: 8px 0;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 4px;
+            transition: width 0.3s ease;
+            width: 0%;
+        }
+
+        .progress-text {
+            font-size: 12px;
+            color: #4a5568;
+            text-align: center;
+            margin-top: 4px;
+        }
+
+        .upload-stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 8px;
+            margin-top: 12px;
+        }
+
+        .upload-stat {
+            text-align: center;
+            padding: 8px;
+            border-radius: 8px;
+            font-size: 12px;
+        }
+
+        .stat-uploaded {
+            background: #c6f6d5;
+            color: #22543d;
+        }
+
+        .stat-duplicates {
+            background: #fbb6ce;
+            color: #744210;
+        }
+
+        .stat-errors {
+            background: #fed7d7;
+            color: #822727;
+        }
+
+        .db-connected {
+            background: linear-gradient(135deg, #c6f6d5, #9ae6b4);
+            color: #22543d;
+            border: 1px solid #9ae6b4;
+        }
+
+        .db-disconnected {
+            background: linear-gradient(135deg, #fed7d7, #feb2b2);
+            color: #822727;
+            border: 1px solid #feb2b2;
+        }
+
+        .player-overview {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 16px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .player-info h2 {
+            color: #2d3748;
+            font-size: 20px;
+            font-weight: 700;
+            margin-bottom: 8px;
+            text-align: center;
+        }
+
+        .player-details {
+            color: #718096;
+            text-align: center;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .player-details span {
+            color: #4a5568;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: #718096;
+        }
+
+        .empty-state-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+            opacity: 0.5;
+        }
+
+        .floating-action {
+            position: sticky;
+            bottom: 20px;
+            margin-top: 20px;
+        }
+
+        .loading-message {
+            font-size: 18px;
+            font-weight: 600;
+            color: #4a5568;
+            margin-bottom: 8px;
+        }
+
+        /* Scrollbar styling */
+        .results-container::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .results-container::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 3px;
+        }
+
+        .results-container::-webkit-scrollbar-thumb {
+            background: #c1c1c1;
+            border-radius: 3px;
+        }
+
+        .results-container::-webkit-scrollbar-thumb:hover {
+            background: #a8a8a8;
+        }
+
+
+        /* Status Bar */
+        .status-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 20px;
+            background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(10px);
+            border-radius: 16px;
+            margin-bottom: 20px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .status-left {
+            flex: 1;
+        }
+
+        .status-right {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .page-indicator {
+            font-size: 14px;
+            font-weight: 600;
+            padding: 12px 16px;
+            border-radius: 8px;
+            display: block;
+            text-align: center;
+            margin: 20px auto;
+            max-width: 300px;
+        }
+
+        .auth-indicator {
+            font-size: 12px;
+            color: #666;
+            font-weight: 500;
+        }
+
+        .login-btn, .logout-btn {
+            background: transparent;
+            border: 1px solid rgba(0, 0, 0, 0.1);
+            border-radius: 6px;
+            padding: 6px 8px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .login-btn:hover, .logout-btn:hover {
+            background: rgba(0, 0, 0, 0.05);
+            transform: translateY(-1px);
+        }
+
+        .status-ready {
+            background: linear-gradient(135deg, #d4edda, #c3e6cb);
+            color: #155724;
+        }
+
+        .status-navigate {
+            background: linear-gradient(135deg, #fff3cd, #ffeaa7);
+            color: #856404;
+        }
+
+        .status-offline {
+            background: linear-gradient(135deg, #f8d7da, #f5c6cb);
+            color: #721c24;
+        }
+
+        /* Modal styles */
+        .modal {
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(5px);
+        }
+
+        .modal-content {
+            background: white;
+            margin: 10% auto;
+            border-radius: 16px;
+            width: 90%;
+            max-width: 400px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            animation: modalSlideIn 0.3s ease-out;
+        }
+
+        @keyframes modalSlideIn {
+            from {
+                transform: translateY(-50px);
+                opacity: 0;
+            }
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 20px 0 20px;
+        }
+
+        .modal-header h2 {
+            margin: 0;
+            color: #2d3748;
+            font-size: 18px;
+        }
+
+        .close {
+            color: #aaa;
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: color 0.2s ease;
+        }
+
+        .close:hover,
+        .close:focus {
+            color: #667eea;
+        }
+
+        .modal-body {
+            padding: 20px;
+        }
+
+        .login-footer {
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid #e2e8f0;
+            text-align: center;
+        }
+
+        .login-footer p {
+            color: #718096;
+            font-size: 14px;
+            margin: 0;
+        }
+
+        /* Profile Linking Styles */
+        .profile-link-container {
+            text-align: center;
+        }
+
+        .link-instruction {
+            background: linear-gradient(135deg, #f8fafc, #e2e8f0);
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            border: 1px solid #cbd5e0;
+            text-align: center;
+        }
+
+        .guidance-icon {
+            font-size: 32px;
+            margin-bottom: 12px;
+        }
+
+        .link-instruction h4 {
+            margin: 0 0 12px 0;
+            color: #2d3748;
+            font-size: 16px;
+            font-weight: 600;
+        }
+
+        .link-instruction p {
+            margin: 8px 0 16px 0;
+            color: #4a5568;
+            font-weight: 500;
+            line-height: 1.4;
+        }
+
+        .instruction-steps {
+            display: flex;
+            justify-content: space-between;
+            gap: 8px;
+            margin-top: 16px;
+        }
+
+        .step {
+            flex: 1;
+            background: rgba(255, 255, 255, 0.7);
+            padding: 8px 6px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 500;
+            color: #4a5568;
+            border: 1px solid rgba(0, 0, 0, 0.1);
+        }
+
+        .link-confirmation {
+            background: #fff;
+            border: 2px solid #667eea;
+            border-radius: 12px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+
+        .link-confirmation h3 {
+            color: #2d3748;
+            margin-bottom: 16px;
+            font-size: 18px;
+        }
+
+        .player-info-card {
+            background: #f8fafc;
+            border-radius: 8px;
+            padding: 16px;
+            margin: 16px 0;
+            text-align: left;
+        }
+
+        .player-detail {
+            display: flex;
+            justify-content: space-between;
+            margin: 8px 0;
+            padding: 4px 0;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        .player-detail:last-child {
+            border-bottom: none;
+        }
+
+        .player-detail strong {
+            color: #2d3748;
+        }
+
+        .player-detail span {
+            color: #4a5568;
+            font-weight: 500;
+        }
+
+        .link-actions {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+            margin-top: 20px;
+        }
+
+        .link-actions .btn {
+            min-width: 120px;
+        }
+
+        .link-success {
+            background: linear-gradient(135deg, #d4edda, #c3e6cb);
+            border-radius: 12px;
+            padding: 24px;
+            margin: 20px 0;
+            color: #155724;
+        }
+
+        .success-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+        }
+
+        .link-success h3 {
+            color: #155724;
+            margin-bottom: 12px;
+        }
+
+        .link-success p {
+            margin: 0;
+            font-weight: 500;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Player Profile Detection Bar -->
+        <div id="page-status" class="page-indicator"></div>
+
+        <!-- Minimal Auth Status Bar -->
+        <div class="status-bar">
+            <div class="status-left">
+                <div id="auth-status" class="auth-indicator">Not logged in</div>
+            </div>
+            <div class="status-right">
+                <button id="login-button" class="login-btn">Login</button>
+                <button id="logout-button" class="logout-btn" style="display: none;">Logout</button>
+            </div>
+        </div>
+
+        <!-- Login Modal -->
+        <div id="login-modal" class="modal" style="display: none;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>🔐 Login to Tennis Player App</h2>
+                    <span id="close-modal" class="close">&times;</span>
+                </div>
+                <div class="modal-body">
+                    <div id="login-status" class="status-message"></div>
+                    <form id="login-form">
+                        <div class="input-group">
+                            <input type="email" id="email-input" placeholder="Your email address" required />
+                        </div>
+                        <div class="input-group">
+                            <input type="password" id="password-input" placeholder="Your password" required />
+                        </div>
+                        <button type="submit" class="btn btn-primary" id="login-submit">Sign In</button>
+                    </form>
+                    <div class="login-footer">
+                        <p>Don't have an account? Sign up in the Tennis Player App first.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="player-overview" id="player-overview">
+            <div class="player-info">
+                <h2 id="player-name">No player loaded</h2>
+                <div class="player-details">
+                    <span id="player-club">-</span> • 
+                    <span id="player-lk">-</span> • 
+                    <span id="player-nationality">-</span>
+                </div>
+            </div>
+        </div>
+
+
+        <!-- Profile Linking Section -->
+        <div class="section" id="profile-linking-section" style="display: none;">
+            <div class="section-header">
+                <h2>🔗 Link Your Player Profile</h2>
+            </div>
+            
+            <div id="linking-status" class="status-message"></div>
+            
+            <div id="profile-link-info" class="profile-link-container">
+                <div class="link-instruction" id="link-guidance">
+                    <div class="guidance-icon">📍</div>
+                    <h4>Link Your Tennis.de Profile</h4>
+                    <p>To sync your match data, please visit <strong>"Mein Spielerprofil"</strong> on tennis.de and return here to link your account.</p>
+                    <div class="instruction-steps">
+                        <div class="step">1. Go to tennis.de</div>
+                        <div class="step">2. Navigate to "Mein Spielerprofil"</div>
+                        <div class="step">3. Return here to link</div>
+                    </div>
+                </div>
+                
+                <div id="link-confirmation" class="link-confirmation" style="display: none;">
+                    <h3>Confirm Profile Link</h3>
+                    <div class="player-info-card">
+                        <div class="player-detail">
+                            <strong>Player Name:</strong> <span id="link-player-name"></span>
+                        </div>
+                        <div class="player-detail">
+                            <strong>DTB ID:</strong> <span id="link-dtb-id"></span>
+                        </div>
+                    </div>
+                    <div class="link-actions">
+                        <button id="confirm-link-button" class="btn btn-primary">Confirm Link</button>
+                        <button id="cancel-link-button" class="btn btn-secondary">Cancel</button>
+                    </div>
+                </div>
+                
+                <div id="link-success" class="link-success" style="display: none;">
+                    <div class="success-icon">✅</div>
+                    <h3>Profile Linked Successfully!</h3>
+                    <p>Your account is now linked to DTB ID: <span id="linked-dtb-id"></span></p>
+                    <small>You can now sync your match history!</small>
+                </div>
+            </div>
+            
+            <div class="floating-action">
+                <button id="link-profile-button" class="btn btn-secondary" style="display: none;">Link Profile</button>
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-header">
+                <h2>📊 Match History</h2>
+                <button id="full-history-sync-button" class="btn btn-primary">Sync Match History</button>
+            </div>
+            
+            <div id="status-message" class="status-message"></div>
+            
+            <div id="results-container" class="results-container">
+                <div class="empty-state">
+                    <div class="empty-state-icon">🎾</div>
+                    <p>No matches extracted yet</p>
+                    <small>Click "Sync Match History" to begin</small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Load configuration -->
+    <script src="config.js"></script>
+    <!-- Load Supabase client -->
+    <script src="supabase.js"></script>
+    <!-- Debug script (remove after testing) -->
+    <script src="debug-supabase.js"></script>
+    <!-- Load our Supabase client wrapper -->
+    <script src="supabase-client.js"></script>
+    <!-- Load main sidepanel script -->
+    <script src="sidepanel.js"></script>
+</body>
+</html>
