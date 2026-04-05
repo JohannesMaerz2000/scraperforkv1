@@ -25,6 +25,20 @@ const state = {
     failed: 0,
     lastError: null
   },
+  urlScraperAutomation: {
+    isRunning: false,
+    stopRequested: false,
+    runStartedAt: null,
+    tabId: null,
+    teamPortraitUrl: null,
+    total: 0,
+    processed: 0,
+    urlsCaptured: 0,
+    skipped: 0,
+    failed: 0,
+    lastError: null,
+    currentPlayer: null
+  },
   latestClubLeagueContext: null,
   leaguePdfContextByKey: {},
   activeTabPage: {
@@ -1041,6 +1055,251 @@ async function runExperimentalPlayerHistoryAutomation(request = {}) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// URL Scraper Automation
+// ---------------------------------------------------------------------------
+// Lightweight automation that only captures player profile URLs from team lists.
+// Much faster than history automation: click anzeigen → capture URL → go back.
+
+async function waitForProfileUrl(tabId, timeoutMs = 8000, pollMs = 150) {
+  const startedAt = Date.now();
+  while ((Date.now() - startedAt) < timeoutMs) {
+    try {
+      const tab = await chrome.tabs.get(tabId);
+      const url = tab?.url || '';
+      if (url.includes('spielerprofil') && url.includes('#id=')) {
+        return { success: true, url };
+      }
+    } catch (_e) {
+      // Tab might be navigating
+    }
+    await delay(pollMs);
+  }
+  return { success: false, error: 'Timeout waiting for profile URL' };
+}
+
+async function runUrlScraperAutomation(request = {}) {
+  if (!isClientReadyAndAuthed()) {
+    return { success: false, error: 'Please sign in first.' };
+  }
+  if (state.urlScraperAutomation.isRunning) {
+    return { success: false, error: 'URL scraper is already running.' };
+  }
+  if (state.expPlayerHistoryAutomation.isRunning) {
+    return { success: false, error: 'History automation is running. Stop it first.' };
+  }
+
+  const teamPortraitUrl = String(request.teamPortraitUrl || '').trim();
+  if (!teamPortraitUrl || !teamPortraitUrl.includes('teamportrait')) {
+    return { success: false, error: 'teamPortraitUrl must be a valid teamportrait URL.' };
+  }
+
+  const delayMinMs = Number.isInteger(request.delayMinMs) ? request.delayMinMs : 800;
+  const delayMaxMs = Number.isInteger(request.delayMaxMs) ? request.delayMaxMs : 2000;
+
+  state.urlScraperAutomation = {
+    isRunning: true,
+    stopRequested: false,
+    runStartedAt: new Date().toISOString(),
+    tabId: null,
+    teamPortraitUrl,
+    total: 0,
+    processed: 0,
+    urlsCaptured: 0,
+    skipped: 0,
+    failed: 0,
+    lastError: null,
+    currentPlayer: null
+  };
+
+  try {
+    const tab = await getActiveTab();
+    if (!tab?.id) throw new Error('No active tab found for automation');
+    state.urlScraperAutomation.tabId = tab.id;
+
+    // Step 1: Navigate to team page and collect all players
+    const navigated = await navigateTabAndWait(tab.id, teamPortraitUrl, 25000);
+    if (!navigated) throw new Error('Failed to load team portrait page');
+
+    const rosterResponse = await sendToTabWithRetry(tab.id, {
+      action: 'expCollectTeamPlayers',
+      maxPlayers: 5000,
+      maxExpandClicks: 45
+    }, 12, 800);
+
+    if (!rosterResponse?.success) {
+      throw new Error(rosterResponse?.error || 'Failed to collect team players');
+    }
+
+    const allPlayers = (rosterResponse.players || [])
+      .filter((p) => Number.isInteger(parseInt(p?.dtbId, 10)));
+    if (allPlayers.length === 0) throw new Error('No players with DTB-ID found on team page');
+
+    // Step 2: Try batch href extraction first (instant if ZK generates real hrefs)
+    const hrefResponse = await sendToTabWithRetry(tab.id, {
+      action: 'expExtractAnzeigenHrefs'
+    }, 4, 500);
+
+    const hrefMap = new Map();
+    if (hrefResponse?.success && hrefResponse.extractedCount > 0) {
+      for (const item of hrefResponse.results) {
+        hrefMap.set(item.dtbId, item.href);
+      }
+      log(`URL Scraper: extracted ${hrefMap.size} hrefs directly from DOM`);
+    }
+
+    // Step 3: Check which players already have profile_url in DB
+    const dtbIds = allPlayers.map((p) => parseInt(p.dtbId, 10));
+    const existingUrls = await getClient().getPlayersWithUrls(dtbIds);
+    const alreadyHasUrl = new Set();
+    for (const row of existingUrls) {
+      if (row.profile_url) alreadyHasUrl.add(row.dtb_id);
+    }
+
+    // Build work list: players that need URLs
+    const playersNeedingUrls = allPlayers.filter((p) => {
+      const dtbId = parseInt(p.dtbId, 10);
+      // If we got href from DOM, we always have it (will batch-save later)
+      if (hrefMap.has(dtbId)) return false;
+      // If DB already has URL, skip
+      if (alreadyHasUrl.has(dtbId)) return false;
+      return true;
+    });
+
+    state.urlScraperAutomation.total = allPlayers.length;
+    state.urlScraperAutomation.skipped = alreadyHasUrl.size;
+
+    // Step 4: Batch-save all hrefs extracted from DOM
+    if (hrefMap.size > 0) {
+      const hrefUpserts = [];
+      for (const player of allPlayers) {
+        const dtbId = parseInt(player.dtbId, 10);
+        const href = hrefMap.get(dtbId);
+        if (!href) continue;
+        hrefUpserts.push({
+          dtb_id: dtbId,
+          full_name: player.name,
+          profile_url: href
+        });
+      }
+      if (hrefUpserts.length > 0) {
+        await getClient().batchUpsertPlayerUrls(hrefUpserts);
+        state.urlScraperAutomation.urlsCaptured += hrefUpserts.length;
+        log(`URL Scraper: batch-saved ${hrefUpserts.length} URLs from DOM hrefs`);
+      }
+    }
+
+    // Step 5: Click-and-capture loop for remaining players
+    log(`URL Scraper: ${playersNeedingUrls.length} players need click-and-capture`);
+
+    for (const player of playersNeedingUrls) {
+      if (state.urlScraperAutomation.stopRequested) break;
+
+      const dtbId = parseInt(player.dtbId, 10);
+      state.urlScraperAutomation.currentPlayer = player.name;
+      state.urlScraperAutomation.processed += 1;
+
+      // Navigate back to team page
+      const teamReady = await navigateTabAndWait(tab.id, teamPortraitUrl, 25000);
+      if (!teamReady) {
+        state.urlScraperAutomation.failed += 1;
+        state.urlScraperAutomation.lastError = `Failed to load team page for DTB-ID ${dtbId}`;
+        await delay(randomIntBetween(delayMinMs, delayMaxMs));
+        continue;
+      }
+
+      // Click anzeigen for this player
+      const openResult = await sendToTabWithRetry(tab.id, {
+        action: 'expOpenPlayerByDtbId',
+        dtbId,
+        maxExpandClicks: 45
+      }, 12, 700);
+
+      if (!openResult?.success) {
+        state.urlScraperAutomation.failed += 1;
+        state.urlScraperAutomation.lastError = `Could not find DTB-ID ${dtbId}: ${openResult?.error || 'unknown'}`;
+        await delay(randomIntBetween(delayMinMs, delayMaxMs));
+        continue;
+      }
+
+      // Wait for URL to change to a spielerprofil URL (fast - just URL check, no page load needed)
+      const urlResult = await waitForProfileUrl(tab.id, 8000, 150);
+      if (!urlResult?.success) {
+        state.urlScraperAutomation.failed += 1;
+        state.urlScraperAutomation.lastError = `URL timeout for DTB-ID ${dtbId}`;
+        await delay(randomIntBetween(delayMinMs, delayMaxMs));
+        continue;
+      }
+
+      // Save to database
+      await getClient().batchUpsertPlayerUrls([{
+        dtb_id: dtbId,
+        full_name: player.name,
+        profile_url: urlResult.url
+      }]);
+      state.urlScraperAutomation.urlsCaptured += 1;
+
+      await delay(randomIntBetween(delayMinMs, delayMaxMs));
+    }
+
+    const stopped = state.urlScraperAutomation.stopRequested;
+    const summary = {
+      stopped,
+      total: state.urlScraperAutomation.total,
+      urlsCaptured: state.urlScraperAutomation.urlsCaptured,
+      skipped: state.urlScraperAutomation.skipped,
+      failed: state.urlScraperAutomation.failed
+    };
+
+    state.urlScraperAutomation.isRunning = false;
+    state.urlScraperAutomation.stopRequested = false;
+    state.urlScraperAutomation.tabId = null;
+    state.urlScraperAutomation.currentPlayer = null;
+    return { success: true, summary };
+  } catch (error) {
+    state.urlScraperAutomation.lastError = error?.message || String(error);
+    state.urlScraperAutomation.isRunning = false;
+    state.urlScraperAutomation.stopRequested = false;
+    state.urlScraperAutomation.tabId = null;
+    state.urlScraperAutomation.currentPlayer = null;
+    return { success: false, error: error?.message || String(error) };
+  }
+}
+
+async function handleStartUrlScraperAutomation(request = {}) {
+  if (state.urlScraperAutomation.isRunning) {
+    return { success: false, error: 'URL scraper is already running.' };
+  }
+  runUrlScraperAutomation(request).catch((error) => {
+    log('URL scraper automation crashed unexpectedly', error);
+  });
+  return { success: true, status: 'started' };
+}
+
+async function handleStopUrlScraperAutomation() {
+  if (!state.urlScraperAutomation.isRunning) {
+    return { success: true, status: 'idle' };
+  }
+  state.urlScraperAutomation.stopRequested = true;
+  return { success: true, status: 'stop_requested' };
+}
+
+function getUrlScraperStatus() {
+  return {
+    isRunning: state.urlScraperAutomation.isRunning,
+    stopRequested: state.urlScraperAutomation.stopRequested,
+    runStartedAt: state.urlScraperAutomation.runStartedAt,
+    teamPortraitUrl: state.urlScraperAutomation.teamPortraitUrl,
+    total: state.urlScraperAutomation.total,
+    processed: state.urlScraperAutomation.processed,
+    urlsCaptured: state.urlScraperAutomation.urlsCaptured,
+    skipped: state.urlScraperAutomation.skipped,
+    failed: state.urlScraperAutomation.failed,
+    lastError: state.urlScraperAutomation.lastError,
+    currentPlayer: state.urlScraperAutomation.currentPlayer
+  };
+}
+
 async function handleStartExperimentalPlayerHistoryAutomation(request = {}) {
   if (state.expPlayerHistoryAutomation.isRunning) {
     return { success: false, error: 'Automation is already running.' };
@@ -1213,7 +1472,11 @@ const actionHandlers = {
     handleStartExperimentalPlayerHistoryAutomation(request || {}),
   expStopPlayerHistoryAutomation: async () => handleStopExperimentalPlayerHistoryAutomation(),
   expGetPlayerHistoryAutomationStatus: async (request) =>
-    handleGetExperimentalPlayerHistoryAutomationStatus(request || {})
+    handleGetExperimentalPlayerHistoryAutomationStatus(request || {}),
+
+  urlScraperStart: async (request) => handleStartUrlScraperAutomation(request || {}),
+  urlScraperStop: async () => handleStopUrlScraperAutomation(),
+  urlScraperGetStatus: async () => ({ success: true, status: getUrlScraperStatus() })
 };
 
 chrome.runtime.onInstalled.addListener(() => {

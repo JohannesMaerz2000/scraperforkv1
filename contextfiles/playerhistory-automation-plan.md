@@ -101,3 +101,64 @@ Club sidepanel contains:
 - No duplicate queue jobs per player in a batch.
 - Main data integrity preserved (`matches_v2.match_fingerprint` uniqueness).
 - Wrong-profile or mixed-profile states fail safely instead of corrupting player history mapping.
+
+---
+
+## URL Scraper Automation (Implemented)
+
+Lightweight companion automation that only captures player profile URLs from team lists.
+Purpose: collect the `profile_url` (e.g. `spielerprofil.html#id=NO503071/ranking`) for each player,
+which is needed for mobile-app-based full history scraping. The URL contains an internal ID
+that differs from the DTB-ID and is only revealed when navigating to the profile.
+
+### Strategy (Two-Phase)
+
+1. **Phase 1 - DOM href extraction (instant)**:
+   - After expanding the full player list, tries to read `href` attributes directly from the "anzeigen" anchor elements.
+   - If ZK generates real `spielerprofil#id=...` hrefs, all URLs are captured in one pass without clicking.
+   - Batch-saved to DB immediately.
+
+2. **Phase 2 - Click-and-capture (fallback)**:
+   - For players whose URLs could not be extracted from the DOM:
+     - Navigate to team page.
+     - Click "anzeigen" for the player by DTB-ID.
+     - Poll the tab URL (~150ms intervals, 8s timeout) for a `spielerprofil#id=...` change.
+     - Capture URL as soon as hash changes - no need to wait for full page load.
+     - Save to DB and navigate back to team page.
+   - Much faster than history scraping (~1-2s per player vs 15-30s).
+
+### Skip Logic
+- Before starting the click loop, queries DB for players that already have `profile_url` set.
+- Those players are skipped, making the automation effectively resumable.
+
+### Data Storage
+- Upserts into the existing `players` table using `dtb_id` as conflict key.
+- Only writes `dtb_id`, `full_name`, `profile_url`, and `updated_at`.
+- Does not overwrite other fields (LK, club, etc.) - merge-duplicates resolution.
+
+### UI Control
+Club sidepanel contains:
+- Button: `Scrape Player URLs`
+- Button: `Stop`
+- Live status pills: URLs captured, skipped (already in DB), failed, current player name.
+- Status polling every 2s while running.
+
+### Action Handlers
+- `urlScraperStart` - starts the automation on the current `#teamportrait/...` URL.
+- `urlScraperStop` - cooperative stop (current player finishes, then exits).
+- `urlScraperGetStatus` - returns live counters and state.
+
+### Content Script Actions
+- `expExtractAnzeigenHrefs` - attempts batch href extraction from DOM (Phase 1).
+- `expOpenPlayerByDtbId` - reused from history automation for click-and-capture (Phase 2).
+
+### Operational Defaults
+- Delay between click-and-capture players: randomized ~0.8s to 2s.
+- URL poll timeout: 8s per player.
+- No job queue / batch tables needed - state is in-memory, resume via DB `profile_url` check.
+
+### Files
+- `background.js`: `runUrlScraperAutomation()`, state, handlers.
+- `club-content.js`: `expExtractAnzeigenHrefs` action.
+- `supabase-client.js`: `getPlayersWithUrls()`, `batchUpsertPlayerUrls()`.
+- `club-sidepanel.html/js`: UI section + polling.

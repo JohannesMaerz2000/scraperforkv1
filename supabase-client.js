@@ -3068,6 +3068,49 @@ class SupabaseClient {
         return playerIdByDtb;
     }
 
+    // -----------------------------------------------------------------------
+    // URL Scraper: lightweight player URL upsert
+    // -----------------------------------------------------------------------
+
+    async getPlayersWithUrls(dtbIds) {
+        if (!Array.isArray(dtbIds) || dtbIds.length === 0) return [];
+        const inList = dtbIds.join(',');
+        const response = await this.makeRequest(
+            'GET',
+            `/rest/v1/players?dtb_id=in.(${encodeURIComponent(inList)})&select=dtb_id,profile_url`
+        );
+        if (!response.ok) return [];
+        const rows = await response.json();
+        return Array.isArray(rows) ? rows : [];
+    }
+
+    async batchUpsertPlayerUrls(players) {
+        // players: [{ dtb_id, full_name, profile_url }]
+        if (!Array.isArray(players) || players.length === 0) return { success: true, count: 0 };
+
+        const nowIso = new Date().toISOString();
+        const rows = players.map((p) => ({
+            dtb_id: p.dtb_id,
+            full_name: p.full_name,
+            profile_url: p.profile_url,
+            updated_at: nowIso
+        }));
+
+        const response = await this.makeRequest(
+            'POST',
+            '/rest/v1/players?on_conflict=dtb_id',
+            rows,
+            { prefer: 'resolution=merge-duplicates,return=representation' }
+        );
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Failed to upsert player URLs: ${errorText}`);
+        }
+
+        return { success: true, count: rows.length };
+    }
+
     async saveClubTeamPortraitData(payload) {
         try {
             if (!this.isReady() || !this.isAuthenticated()) {

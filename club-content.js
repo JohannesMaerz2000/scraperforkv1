@@ -839,6 +839,44 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
     return true;
   }
 
+  if (request.action === 'expExtractAnzeigenHrefs') {
+    // Try to extract profile URLs directly from the anzeigen button hrefs in the DOM.
+    // If the ZK framework generates real hrefs, this avoids clicking each player.
+    (async () => {
+      const route = parseClubHashContext();
+      if (route.pageType !== 'teamportrait') {
+        sendResponse({ success: false, error: 'Not on a teamportrait page' });
+        return;
+      }
+
+      const rows = Array.from(document.querySelectorAll('tbody.z-rows tr.z-row'));
+      const results = [];
+
+      for (const row of rows) {
+        if (!isElementVisible(row)) continue;
+        const rowText = normalizeText(row.textContent);
+        const dtbIdMatch = rowText.match(/DTB-ID\s*(\d{5,12})/i);
+        if (!dtbIdMatch) continue;
+        const dtbId = parseInt(dtbIdMatch[1], 10);
+
+        const actionLabel = Array.from(row.querySelectorAll('.z-toolbarbutton-content'))
+          .find((el) => lower(el.textContent) === 'anzeigen');
+        const actionButton = actionLabel?.closest('a.z-toolbarbutton, a[href]');
+        const href = actionButton?.getAttribute('href');
+
+        // Only useful if it's a real URL with spielerprofil and an #id= fragment
+        if (href && href.includes('spielerprofil') && href.includes('#id=')) {
+          results.push({ dtbId, href });
+        }
+      }
+
+      sendResponse({ success: true, results, extractedCount: results.length });
+    })().catch((error) => {
+      sendResponse({ success: false, error: error?.message || String(error) });
+    });
+    return true;
+  }
+
   if (request.action === 'expOpenPlayerByDtbId') {
     (async () => {
       const route = parseClubHashContext();

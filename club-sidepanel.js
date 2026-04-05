@@ -20,6 +20,15 @@ document.addEventListener('DOMContentLoaded', () => {
     expListSubtitle: document.getElementById('exp-list-subtitle'),
     expCompletedList: document.getElementById('exp-completed-list'),
 
+    urlScraperStartButton: document.getElementById('url-scraper-start-button'),
+    urlScraperStopButton: document.getElementById('url-scraper-stop-button'),
+    urlScraperStatus: document.getElementById('url-scraper-status'),
+    urlScraperMeta: document.getElementById('url-scraper-meta'),
+    urlScraperPillCaptured: document.getElementById('url-scraper-pill-captured'),
+    urlScraperPillSkipped: document.getElementById('url-scraper-pill-skipped'),
+    urlScraperPillFailed: document.getElementById('url-scraper-pill-failed'),
+    urlScraperPillCurrent: document.getElementById('url-scraper-pill-current'),
+
     loginModal: document.getElementById('login-modal'),
     closeModal: document.getElementById('close-modal'),
     loginForm: document.getElementById('login-form'),
@@ -43,7 +52,8 @@ document.addEventListener('DOMContentLoaded', () => {
     lastPortraitSaveKey: null,
     lastLeagueTablesSaveKey: null,
     lastCalendarSaveKey: null,
-    portraitSyncPausedNoticeShown: false
+    portraitSyncPausedNoticeShown: false,
+    urlScraperPollTimer: null
   };
 
   function sendRuntimeMessage(message) {
@@ -525,6 +535,94 @@ document.addEventListener('DOMContentLoaded', () => {
     await refreshExpStatus();
   }
 
+  // --- URL Scraper ---
+
+  async function handleUrlScraperStart() {
+    if (!state.isAuthenticated) {
+      setStatus(els.urlScraperStatus, 'Login required for URL scraper.', 'info');
+      return;
+    }
+
+    const teamPortraitUrl = await resolveCurrentTeamPortraitUrl();
+    if (!teamPortraitUrl.includes('teamportrait')) {
+      setStatus(els.urlScraperStatus, 'Open a teamportrait page first.', 'error');
+      return;
+    }
+
+    const response = await sendRuntimeMessage({
+      action: 'urlScraperStart',
+      teamPortraitUrl,
+      delayMinMs: 800,
+      delayMaxMs: 2000
+    });
+
+    if (!response?.success) {
+      setStatus(els.urlScraperStatus, `Start failed: ${response?.error || 'Unknown error'}`, 'error');
+      return;
+    }
+
+    setStatus(els.urlScraperStatus, 'URL scraper started.', 'success');
+    startUrlScraperPolling();
+  }
+
+  async function handleUrlScraperStop() {
+    const response = await sendRuntimeMessage({ action: 'urlScraperStop' });
+    if (!response?.success) {
+      setStatus(els.urlScraperStatus, `Stop failed: ${response?.error || 'Unknown error'}`, 'error');
+      return;
+    }
+    setStatus(els.urlScraperStatus, 'Stop requested.', 'info');
+  }
+
+  async function refreshUrlScraperStatus() {
+    const response = await sendRuntimeMessage({ action: 'urlScraperGetStatus' });
+    const status = response?.status;
+    if (!status) return;
+
+    const parts = [];
+    if (status.isRunning) {
+      parts.push('Running');
+      if (status.currentPlayer) parts.push(`- ${status.currentPlayer}`);
+    } else if (status.urlsCaptured > 0 || status.failed > 0) {
+      parts.push('Finished');
+    }
+    if (status.total > 0) {
+      parts.push(`(${status.processed + status.urlsCaptured}/${status.total})`);
+    }
+    if (status.lastError && !status.isRunning) {
+      parts.push(`Last error: ${status.lastError}`);
+    }
+
+    const type = status.isRunning ? 'info' : (status.lastError && !status.urlsCaptured ? 'error' : 'success');
+    if (parts.length > 0) {
+      setStatus(els.urlScraperStatus, parts.join(' '), type);
+    }
+
+    if (els.urlScraperPillCaptured) els.urlScraperPillCaptured.textContent = status.urlsCaptured || '0';
+    if (els.urlScraperPillSkipped) els.urlScraperPillSkipped.textContent = status.skipped || '0';
+    if (els.urlScraperPillFailed) els.urlScraperPillFailed.textContent = status.failed || '0';
+    if (els.urlScraperPillCurrent) els.urlScraperPillCurrent.textContent = status.currentPlayer || '-';
+
+    if (els.urlScraperMeta) {
+      els.urlScraperMeta.style.display = (status.total > 0 || status.isRunning) ? '' : 'none';
+    }
+
+    if (els.urlScraperStartButton) els.urlScraperStartButton.disabled = !!status.isRunning;
+    if (els.urlScraperStopButton) els.urlScraperStopButton.disabled = !status.isRunning;
+
+    // Stop polling when not running
+    if (!status.isRunning && state.urlScraperPollTimer) {
+      clearInterval(state.urlScraperPollTimer);
+      state.urlScraperPollTimer = null;
+    }
+  }
+
+  function startUrlScraperPolling() {
+    if (state.urlScraperPollTimer) clearInterval(state.urlScraperPollTimer);
+    state.urlScraperPollTimer = setInterval(() => refreshUrlScraperStatus(), 2000);
+    refreshUrlScraperStatus();
+  }
+
   async function onRuntimeMessage(message) {
     switch (message.action) {
       case 'authStatusChanged':
@@ -573,6 +671,8 @@ document.addEventListener('DOMContentLoaded', () => {
     els.loginForm?.addEventListener('submit', handleLoginSubmit);
     els.expStartButton?.addEventListener('click', handleExpStart);
     els.expStopButton?.addEventListener('click', handleExpStop);
+    els.urlScraperStartButton?.addEventListener('click', handleUrlScraperStart);
+    els.urlScraperStopButton?.addEventListener('click', handleUrlScraperStop);
 
     chrome.runtime.onMessage.addListener((message) => {
       onRuntimeMessage(message);
@@ -600,6 +700,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     startExpStatusPolling();
     await refreshExpStatus();
+    await refreshUrlScraperStatus();
   }
 
   initialize();

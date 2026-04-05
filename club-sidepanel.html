@@ -221,6 +221,22 @@
         <div id="exp-completed-list" class="exp-list"></div>
       </div>
     </div>
+
+    <div class="section">
+      <h2>URL Scraper</h2>
+      <div class="control-row">
+        <button id="url-scraper-start-button" class="btn btn-primary" type="button">Scrape Player URLs</button>
+        <button id="url-scraper-stop-button" class="btn btn-danger" type="button">Stop</button>
+      </div>
+      <div class="compact-help">Captures profile URLs from the team player list. Much faster than full history scraping.</div>
+      <div id="url-scraper-status" class="status-item status-info"></div>
+      <div id="url-scraper-meta" class="exp-meta" style="display:none;">
+        <div class="exp-pill">URLs captured <strong id="url-scraper-pill-captured">0</strong></div>
+        <div class="exp-pill">Skipped <strong id="url-scraper-pill-skipped">0</strong></div>
+        <div class="exp-pill">Failed <strong id="url-scraper-pill-failed">0</strong></div>
+        <div class="exp-pill">Current <strong id="url-scraper-pill-current">-</strong></div>
+      </div>
+    </div>
   </div>
 
   <div id="login-modal" class="modal">
