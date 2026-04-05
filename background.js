@@ -16,6 +16,7 @@ const state = {
     isRunning: false,
     stopRequested: false,
     runStartedAt: null,
+    tabId: null,
     batchId: null,
     batchKey: null,
     teamPortraitUrl: null,
@@ -302,7 +303,19 @@ function setBadge(tabId, pageInfo) {
   });
 }
 
-async function setPanelByPage(pageInfo) {
+async function setPanelByPage(tabId, pageInfo) {
+  const automationState = state.expPlayerHistoryAutomation;
+  const lockToClubPanel =
+    automationState?.isRunning
+    && Number.isInteger(automationState?.tabId)
+    && Number.isInteger(tabId)
+    && automationState.tabId === tabId;
+
+  if (lockToClubPanel) {
+    await chrome.sidePanel.setOptions({ path: PANEL_PATHS.club, enabled: true });
+    return;
+  }
+
   if (pageInfo.isTournamentPage) {
     await chrome.sidePanel.setOptions({ path: PANEL_PATHS.tournament, enabled: true });
     return;
@@ -356,7 +369,7 @@ async function processPageContext(tabId, url, triggerInit = false) {
   const pageInfo = parseTennisPageType(url);
 
   setBadge(tabId, pageInfo);
-  await setPanelByPage(pageInfo);
+  await setPanelByPage(tabId, pageInfo);
   await notifyUrlUpdated(tabId, url, pageInfo);
 
   if (triggerInit) {
@@ -510,13 +523,34 @@ async function determineHistoryScrapeMode(playerDtbId) {
 }
 
 async function handleStartFullHistoryScrapeWithContext(request = {}) {
-  const tab = await getActiveTab();
+  let tab = null;
+  if (Number.isInteger(request.tabId)) {
+    try {
+      tab = await chrome.tabs.get(request.tabId);
+    } catch (_error) {
+      tab = null;
+    }
+  }
+  if (!tab) {
+    tab = await getActiveTab();
+  }
   if (!tab) {
     return { status: 'Error', message: 'No active tab found to scrape.' };
   }
 
   const playerContext = await resolvePlayerContext(request);
   const playerDtbId = toNumericDtbId(playerContext?.dtbId);
+  if (playerDtbId) {
+    const identityResponse = await sendToTabWithRetry(tab.id, { action: 'expGetCurrentPlayerIdentity' }, 6, 250);
+    const activeProfileDtbId = toNumericDtbId(identityResponse?.data?.dtbId);
+    if (!identityResponse?.success || activeProfileDtbId !== playerDtbId) {
+      return {
+        status: 'Error',
+        message: `Profile DTB-ID mismatch before scrape. Expected ${playerDtbId}, got ${activeProfileDtbId || 'unknown'}.`
+      };
+    }
+  }
+
   const modeResult = await determineHistoryScrapeMode(playerDtbId);
 
   state.activeHistorySyncContext = {
@@ -542,6 +576,36 @@ async function handleStartFullHistoryScrapeWithContext(request = {}) {
     ...(response || {}),
     mode: modeResult.mode,
     latestKnownMatchDate: modeResult.latestKnownMatchDate
+  };
+}
+
+async function waitForExpectedPlayerProfile(tabId, expectedDtbId, timeoutMs = 22000, pollMs = 500) {
+  const expected = toNumericDtbId(expectedDtbId);
+  if (!Number.isInteger(expected)) {
+    return { success: false, error: 'Invalid expected DTB-ID', data: null };
+  }
+
+  const startedAt = Date.now();
+  let lastIdentity = null;
+
+  while ((Date.now() - startedAt) < timeoutMs) {
+    const response = await sendToTab(tabId, { action: 'expGetCurrentPlayerIdentity' });
+    if (response?.success && response?.data) {
+      lastIdentity = response.data;
+      const currentDtbId = toNumericDtbId(response.data.dtbId);
+      if (response.data.isPlayerProfilePage && response.data.isLoaded && currentDtbId === expected) {
+        return { success: true, data: response.data };
+      }
+    }
+    await delay(pollMs);
+  }
+
+  const got = toNumericDtbId(lastIdentity?.dtbId);
+  const gotText = got ? String(got) : 'unknown';
+  return {
+    success: false,
+    error: `Expected DTB-ID ${expected}, but current profile is ${gotText}.`,
+    data: lastIdentity
   };
 }
 
@@ -577,9 +641,10 @@ async function handlePlayerDataScraped(data) {
   return { success: true };
 }
 
-async function handleFullMatchHistoryScraped(data, meta = {}) {
+async function handleFullMatchHistoryScraped(data, meta = {}, scrapeError = null) {
   const safeData = Array.isArray(data) ? data : [];
   const syncContext = state.activeHistorySyncContext;
+  const hasFatalScrapeError = !!(scrapeError || meta?.hadFatalError);
 
   await chrome.storage.local.set({ fullMatchHistory: safeData });
   await broadcast({
@@ -590,6 +655,21 @@ async function handleFullMatchHistoryScraped(data, meta = {}) {
       mode: meta?.mode || syncContext?.mode || 'full_backfill'
     }
   });
+
+  if (hasFatalScrapeError) {
+    await broadcast({
+      action: 'uploadCompleted',
+      result: {
+        success: false,
+        uploaded: 0,
+        duplicates: 0,
+        errors: safeData.length,
+        message: scrapeError || meta?.stoppedReason || 'Scrape failed before upload.'
+      }
+    });
+    state.activeHistorySyncContext = null;
+    return { success: false, error: scrapeError || meta?.stoppedReason || 'Scrape failed' };
+  }
 
   let uploadResult = { success: true, uploaded: 0, duplicates: 0, errors: 0 };
   if (safeData.length > 0) {
@@ -769,6 +849,7 @@ async function runExperimentalPlayerHistoryAutomation(request = {}) {
     isRunning: true,
     stopRequested: false,
     runStartedAt: new Date().toISOString(),
+    tabId: null,
     batchId: null,
     batchKey,
     teamPortraitUrl,
@@ -783,6 +864,7 @@ async function runExperimentalPlayerHistoryAutomation(request = {}) {
     if (!tab?.id) {
       throw new Error('No active tab found for automation');
     }
+    state.expPlayerHistoryAutomation.tabId = tab.id;
 
     const navigated = await navigateTabAndWait(tab.id, teamPortraitUrl, 25000);
     if (!navigated) {
@@ -879,9 +961,15 @@ async function runExperimentalPlayerHistoryAutomation(request = {}) {
         continue;
       }
 
-      await delay(1300);
+      const profileReady = await waitForExpectedPlayerProfile(tab.id, dtbId, 22000, 500);
+      if (!profileReady?.success) {
+        await onJobFailed('PLAYER_PROFILE_MISMATCH', profileReady?.error || `Expected profile DTB-ID ${dtbId}`);
+        await delay(perJobDelayMs);
+        continue;
+      }
 
       const scrapeResult = await handleStartFullHistoryScrapeWithContext({
+        tabId: tab.id,
         playerData: { dtbId }
       });
       if (!scrapeResult || scrapeResult.status === 'Error') {
@@ -931,6 +1019,7 @@ async function runExperimentalPlayerHistoryAutomation(request = {}) {
 
     state.expPlayerHistoryAutomation.isRunning = false;
     state.expPlayerHistoryAutomation.stopRequested = false;
+    state.expPlayerHistoryAutomation.tabId = null;
     return { success: true, summary };
   } catch (error) {
     const batchId = state.expPlayerHistoryAutomation.batchId;
@@ -947,6 +1036,7 @@ async function runExperimentalPlayerHistoryAutomation(request = {}) {
     state.expPlayerHistoryAutomation.lastError = error?.message || String(error);
     state.expPlayerHistoryAutomation.isRunning = false;
     state.expPlayerHistoryAutomation.stopRequested = false;
+    state.expPlayerHistoryAutomation.tabId = null;
     return { success: false, error: error?.message || String(error) };
   }
 }
@@ -1035,7 +1125,7 @@ const actionHandlers = {
 
   playerDataScraped: async (request) => handlePlayerDataScraped(request.data || null),
   fullMatchHistoryScraped: async (request) =>
-    handleFullMatchHistoryScraped(request.data || [], request.meta || {}),
+    handleFullMatchHistoryScraped(request.data || [], request.meta || {}, request.error || null),
 
   tournamentPageLoaded: async (request) => {
     await broadcast(request);

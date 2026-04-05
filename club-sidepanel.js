@@ -26,10 +26,12 @@ document.addEventListener('DOMContentLoaded', () => {
     latestPortraitPayload: null,
     latestLeagueTablesPayload: null,
     latestCalendarPayload: null,
+    expIsRunning: false,
     expStatusPollTimer: null,
     lastPortraitSaveKey: null,
     lastLeagueTablesSaveKey: null,
-    lastCalendarSaveKey: null
+    lastCalendarSaveKey: null,
+    portraitSyncPausedNoticeShown: false
   };
 
   function sendRuntimeMessage(message) {
@@ -141,6 +143,16 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function savePortrait(payload) {
+    if (state.expIsRunning) {
+      if (!state.portraitSyncPausedNoticeShown) {
+        setStatus(els.portraitSyncStatus, 'Team portrait auto-sync paused during player-history automation.', 'info');
+        state.portraitSyncPausedNoticeShown = true;
+      }
+      return;
+    }
+
+    state.portraitSyncPausedNoticeShown = false;
+
     if (!state.isAuthenticated || !payload) {
       if (!state.isAuthenticated) {
         setStatus(els.portraitSyncStatus, 'Login required to sync team portrait.', 'info');
@@ -346,6 +358,13 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
     const status = response.status || {};
+    state.expIsRunning = !!status.isRunning;
+    if (!state.expIsRunning && state.portraitSyncPausedNoticeShown) {
+      state.portraitSyncPausedNoticeShown = false;
+      if (state.latestPortraitPayload) {
+        await savePortrait(state.latestPortraitPayload);
+      }
+    }
     const summary = response.summary || null;
     const type = status.isRunning ? 'info' : (status.lastError ? 'error' : 'success');
     setStatus(els.expAutomationStatus, formatExpStatusText(status, summary), type);

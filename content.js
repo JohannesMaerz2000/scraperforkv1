@@ -290,6 +290,94 @@ function parseLKValue(lkString) {
     return isNaN(parsed) ? null : parsed;
 }
 
+function normalizeIdentityName(value) {
+    return String(value || '')
+        .normalize('NFC')
+        .replace(/\([^)]*\)/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase();
+}
+
+function buildIdentityNameVariants(value) {
+    const normalized = normalizeIdentityName(value);
+    if (!normalized) return [];
+
+    const direct = normalized;
+    const compact = normalized.replace(/[^a-z0-9äöüß]/gi, '');
+
+    if (!normalized.includes(',')) {
+        return [direct, compact].filter(Boolean);
+    }
+
+    const parts = normalized.split(',').map((part) => part.trim()).filter(Boolean);
+    if (parts.length < 2) {
+        return [direct, compact].filter(Boolean);
+    }
+
+    const swapped = `${parts.slice(1).join(' ')} ${parts[0]}`.replace(/\s+/g, ' ').trim();
+    const swappedCompact = swapped.replace(/[^a-z0-9äöüß]/gi, '');
+    return [direct, compact, swapped, swappedCompact].filter(Boolean);
+}
+
+function namesLikelyReferToSamePerson(expectedName, candidateName) {
+    const expectedVariants = new Set(buildIdentityNameVariants(expectedName));
+    const candidateVariants = new Set(buildIdentityNameVariants(candidateName));
+    if (expectedVariants.size === 0 || candidateVariants.size === 0) return false;
+
+    for (const variant of expectedVariants) {
+        if (candidateVariants.has(variant)) return true;
+    }
+    return false;
+}
+
+function validateProfileIdentityAgainstMatches(profileName, matches) {
+    const safeMatches = Array.isArray(matches) ? matches : [];
+    const expected = String(profileName || '').trim();
+    if (!expected) {
+        return {
+            valid: false,
+            checkedRows: safeMatches.length,
+            mismatchRows: safeMatches.length,
+            reason: 'profile_name_missing',
+            mismatchSamples: []
+        };
+    }
+
+    let mismatchRows = 0;
+    const mismatchSamples = [];
+
+    for (const match of safeMatches) {
+        const names = [
+            match?.scraped_from_player,
+            match?.team1_player1_name,
+            match?.team1_player2_name,
+            match?.team2_player1_name,
+            match?.team2_player2_name
+        ].filter((value) => String(value || '').trim().length > 0);
+
+        const found = names.some((name) => namesLikelyReferToSamePerson(expected, name));
+        if (!found) {
+            mismatchRows += 1;
+            if (mismatchSamples.length < 5) {
+                mismatchSamples.push({
+                    match_date: match?.match_date || null,
+                    event_name: match?.event_name || null,
+                    names
+                });
+            }
+        }
+    }
+
+    return {
+        valid: mismatchRows === 0,
+        checkedRows: safeMatches.length,
+        mismatchRows,
+        reason: mismatchRows === 0 ? null : 'profile_history_identity_mismatch',
+        mismatchSamples
+    };
+}
+
 /**
  * Extract LK improvement value from the correct cell (column 3)
  */
@@ -585,6 +673,17 @@ function scrapeVisiblePlayerData() {
 
     console.log("✅ Scraped Player Data:", playerData);
     return playerData;
+}
+
+function getCurrentPlayerIdentitySnapshot() {
+    const data = scrapeVisiblePlayerData();
+    return {
+        url: window.location.href,
+        isPlayerProfilePage: isPlayerProfilePage(),
+        isLoaded: !!isPlayerDataLoaded(),
+        dtbId: data?.dtbId || null,
+        fullName: data?.fullName || null
+    };
 }
 
 /**
@@ -1347,6 +1446,9 @@ async function scrapeFullMatchHistory(options = {}) {
     const maxInitialPages = mode === 'incremental_update' ? 20 : 200;
     const maxDeepPages = 200;
 
+    const profileIdentity = getCurrentPlayerIdentitySnapshot();
+    const expectedProfileName = profileIdentity?.fullName || null;
+
     try {
         console.log(`🏁 Starting match history scraping in mode: ${mode}`);
 
@@ -1469,6 +1571,19 @@ async function scrapeFullMatchHistory(options = {}) {
         }
 
         allMatches = dedupeMatchesByHash(allMatches);
+
+        const identityCheck = validateProfileIdentityAgainstMatches(expectedProfileName, allMatches);
+        meta.profileName = expectedProfileName;
+        meta.identityCheck = identityCheck;
+        if (!identityCheck.valid) {
+            meta.hadFatalError = true;
+            meta.identityMismatch = true;
+            meta.stoppedReason = 'profile_history_identity_mismatch';
+            throw new Error(
+                `Identity mismatch: profile "${expectedProfileName}" not found in ${identityCheck.mismatchRows}/${identityCheck.checkedRows} rows.`
+            );
+        }
+
         console.log(`🎉 Scraping completed. Total unique matches: ${allMatches.length}`);
 
         chrome.runtime.sendMessage({
@@ -1561,6 +1676,14 @@ document.addEventListener('click', (event) => {
 
 // Listen for messages from the background script
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    if (request.action === "expGetCurrentPlayerIdentity") {
+        sendResponse({
+            success: true,
+            data: getCurrentPlayerIdentitySnapshot()
+        });
+        return false;
+    }
+
     if (request.action === "startFullHistoryScrape") {
         console.log("📥 Content script received startFullHistoryScrape message.");
         scrapeFullMatchHistory({

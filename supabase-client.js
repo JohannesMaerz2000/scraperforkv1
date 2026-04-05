@@ -1687,21 +1687,30 @@ class SupabaseClient {
         }
 
         const nowIso = new Date().toISOString();
-        const orFilter = [
-            'status.eq.pending',
-            'and(status.eq.failed,next_retry_at.is.null)',
-            `and(status.eq.failed,next_retry_at.lte.${nowIso})`
-        ].join(',');
 
         try {
-            const endpoint = `/rest/v1/${this.expHistoryJobTable}?batch_id=eq.${encodeURIComponent(batchId)}&or=${encodeURIComponent(orFilter)}&order=priority.asc,created_at.asc&limit=25&select=*`;
-            const lookup = await this.makeRequest('GET', endpoint);
-            if (!lookup.ok) {
-                const text = await lookup.text();
-                throw new Error(`Failed to find next job: ${lookup.status} ${text}`);
+            // 1) Prefer pending jobs first, ordered by explicit source_rank to keep human-expected order.
+            const pendingEndpoint = `/rest/v1/${this.expHistoryJobTable}?batch_id=eq.${encodeURIComponent(batchId)}&status=eq.pending&order=priority.asc,source_rank.asc.nullslast,created_at.asc,id.asc&limit=25&select=*`;
+            const pendingLookup = await this.makeRequest('GET', pendingEndpoint);
+            if (!pendingLookup.ok) {
+                const text = await pendingLookup.text();
+                throw new Error(`Failed to find pending jobs: ${pendingLookup.status} ${text}`);
             }
 
-            const jobs = await lookup.json();
+            let jobs = await pendingLookup.json();
+
+            // 2) If no pending jobs are available, continue with retryable failed jobs.
+            if (!Array.isArray(jobs) || jobs.length === 0) {
+                const retryOrFilter = `(next_retry_at.is.null,next_retry_at.lte.${nowIso})`;
+                const failedEndpoint = `/rest/v1/${this.expHistoryJobTable}?batch_id=eq.${encodeURIComponent(batchId)}&status=eq.failed&or=${encodeURIComponent(retryOrFilter)}&order=priority.asc,source_rank.asc.nullslast,created_at.asc,id.asc&limit=25&select=*`;
+                const failedLookup = await this.makeRequest('GET', failedEndpoint);
+                if (!failedLookup.ok) {
+                    const text = await failedLookup.text();
+                    throw new Error(`Failed to find retryable failed jobs: ${failedLookup.status} ${text}`);
+                }
+                jobs = await failedLookup.json();
+            }
+
             const job = (jobs || []).find((candidate) => {
                 const attempts = Number.isInteger(candidate?.attempt_count) ? candidate.attempt_count : 0;
                 const maxAttempts = Number.isInteger(candidate?.max_attempts) ? candidate.max_attempts : 3;
